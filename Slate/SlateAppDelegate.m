@@ -33,6 +33,7 @@
 #import "RunningApplications.h"
 #import "GridOperation.h"
 #import <Sparkle/SUUpdater.h>
+#import <IOKit/hidsystem/IOHIDLib.h>
 
 @implementation SlateAppDelegate
 
@@ -435,9 +436,22 @@ OSStatus OnModifiersChangedEvent(EventHandlerCallRef nextHandler, EventRef theEv
 
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
   if (cmdTabBinding > 0 || cmdShiftTabBinding > 0) {
+    // The app switcher watches every keystroke on the system via a session-wide CGEventTap,
+    // which macOS gates behind the separate "Input Monitoring" privacy permission (distinct
+    // from Accessibility). IOHIDRequestAccess is what makes macOS show its one-time system
+    // prompt for that permission; without calling it, CGEventTapCreate below just silently
+    // returns NULL when unauthorized and the switcher feature would never work.
+    if (!IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)) {
+      SlateLogger(@"Input Monitoring access not yet granted; macOS was asked to prompt the user.");
+    }
+
     CFMachPortRef keyDownEventTap;
     CFRunLoopSourceRef keyDownRunLoopSource;
     keyDownEventTap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, 0, CGEventMaskBit(kCGEventKeyDown), EatAppSwitcherCallback, (__bridge void *)self);
+    if (keyDownEventTap == NULL) {
+      SlateLogger(@"ERROR: Could not create keyDown event tap. App switcher disabled until Input Monitoring is granted and Slate is relaunched.");
+      return;
+    }
     keyDownRunLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, keyDownEventTap, 0);
     CFRunLoopAddSource(CFRunLoopGetCurrent(), keyDownRunLoopSource, kCFRunLoopCommonModes);
     CGEventTapEnable(keyDownEventTap, true);
@@ -445,6 +459,10 @@ OSStatus OnModifiersChangedEvent(EventHandlerCallRef nextHandler, EventRef theEv
     CFMachPortRef keyUpEventTap;
     CFRunLoopSourceRef keyUpRunLoopSource;
     keyUpEventTap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, 0, CGEventMaskBit(kCGEventKeyUp), EatAppSwitcherResetCallback, (__bridge void *)self);
+    if (keyUpEventTap == NULL) {
+      SlateLogger(@"ERROR: Could not create keyUp event tap. App switcher disabled until Input Monitoring is granted and Slate is relaunched.");
+      return;
+    }
     keyUpRunLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, keyUpEventTap, 0);
     CFRunLoopAddSource(CFRunLoopGetCurrent(), keyUpRunLoopSource, kCFRunLoopCommonModes);
     CGEventTapEnable(keyUpEventTap, true);
@@ -508,23 +526,14 @@ OSStatus OnModifiersChangedEvent(EventHandlerCallRef nextHandler, EventRef theEv
     keyUpLock = [[NSObject alloc] init];
   }
 
-  // Check if Accessibility API is enabled
-  if (!AXAPIEnabled()) {
-    NSAlert *alert = [SlateConfig warningAlertWithKeyEquivalents: [NSArray arrayWithObjects:@"Enable", @"Quit", nil]];
-    [alert setMessageText:[NSString stringWithFormat:@"Slate cannot run without \"Access for assistive devices\". Would you like to enable it?"]];
-    [alert setInformativeText:[NSString stringWithFormat:@"You may be prompted for your administrator password."]];
-    [alert setAlertStyle:NSCriticalAlertStyle];
-    NSInteger alertIndex = [alert runModal];
-    if (alertIndex == NSAlertFirstButtonReturn) {
-      SlateLogger(@"User wants to enable Access for assistive devices");
-      NSDictionary* errorDictionary;
-      NSAppleScript* applescript = [[NSAppleScript alloc] initWithSource:@"tell application \"System Events\" to set UI elements enabled to true"];
-      [applescript executeAndReturnError:&errorDictionary];
-    }
-    else if (alertIndex == NSAlertSecondButtonReturn) {
-      SlateLogger(@"User selected quit");
-      [NSApp terminate:nil];
-    }
+  // Check if Accessibility access is granted. AXIsProcessTrustedWithOptions, unlike the
+  // legacy AXAPIEnabled()/"UI elements enabled" AppleScript this replaces, both reflects the
+  // modern per-app Privacy & Security > Accessibility permission and, with the prompt option
+  // below, makes macOS show its own system dialog (with a button straight to the Settings
+  // pane) the first time this app (identified by bundle ID + code signature) asks.
+  NSDictionary *axPromptOptions = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
+  if (!AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)axPromptOptions)) {
+    SlateLogger(@"Accessibility access not yet granted; macOS was asked to prompt the user.");
   }
 
   // Read Config
