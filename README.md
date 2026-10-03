@@ -1,8 +1,18 @@
 # About Slate-arm64 #
 
-I forked the original repository and refactored the project so that it runs natively on Apple silicon. I refactored some deprecated function calls to allow building.
+Originally forked from [https://github.com/jigish/slate](https://github.com/jigish/slate) by [https://github.com/fertigt/slate_arm64](https://github.com/fertigt/slate_arm64), and updated to add:
 
-Slate-arm64 currently works on Mac OS X 10.9 and above
+- [x] .app release functioning on OS 27.0.1
+- [x] Proper permissions prompting on startup to request required privileges (device access and input monitoring)
+
+🎉 .app remains unsigned due to lack of Apple Developer credentials, but Slate lives on! 🎉
+
+# Installation
+
+Download `Slate.app.zip` from the [latest release](https://github.com/tsnowak/slate_arm64/releases), and install in `/Applications`.
+
+---
+# Original Slate README Below
 
 # About Slate #
 
